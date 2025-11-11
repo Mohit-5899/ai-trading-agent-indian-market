@@ -12,7 +12,7 @@ from fastapi import FastAPI, Depends, HTTPException, Query, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
-from sqlalchemy import desc, func
+from sqlalchemy import desc, func, text
 
 from models.database import (
     TradingAccount, Trade, Invocation, PortfolioSnapshot, 
@@ -394,7 +394,7 @@ async def get_system_status(db: Session = Depends(get_db)):
     """Get system status"""
     try:
         # Check database connection
-        db.execute("SELECT 1")
+        db.execute(text("SELECT 1"))
         
         # Get active accounts
         active_accounts = db.query(TradingAccount).filter(

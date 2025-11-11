@@ -125,7 +125,7 @@ class TradingEngine:
         session = self.session_factory()
         try:
             # 1. Check market hours
-            if not self._is_market_open():
+            if not await self._is_market_open():
                 logger.info(f"Market closed, skipping account {account.name}")
                 return
                 
@@ -575,12 +575,257 @@ Make ONE trading decision or choose to hold.
             
             session.commit()
             logger.info("Initial data loaded successfully")
-            
+
         except Exception as e:
             session.rollback()
             logger.error(f"Error loading initial data: {e}")
             raise
         finally:
             session.close()
-    
-    # Additional helper methods would be implemented here...
+
+    async def _get_account_stocks(self, account: TradingAccount) -> List[Stock]:
+        """Get stocks assigned to this trading account based on LLM model configuration"""
+        from config.settings import INDIAN_STOCKS, LLM_MODELS
+
+        session = self.session_factory()
+        try:
+            # Find which LLM model this account uses
+            account_llm_config = None
+            for llm_key, llm_config in LLM_MODELS.items():
+                if llm_config.get("name") == account.model_name:
+                    account_llm_config = llm_config
+                    break
+
+            if not account_llm_config:
+                # Default to all stocks if no config found
+                logger.warning(f"No LLM config found for {account.model_name}, using all stocks")
+                return session.query(Stock).all()
+
+            # Get stock symbols for this account
+            stock_symbols = account_llm_config.get("stocks", [])
+
+            # Query stocks from database
+            stocks = session.query(Stock).filter(
+                Stock.symbol.in_(stock_symbols)
+            ).all()
+
+            return stocks
+
+        except Exception as e:
+            logger.error(f"Error getting account stocks: {e}")
+            return []
+        finally:
+            session.close()
+
+    async def _calculate_indicators(self, stock_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Calculate technical indicators for stock data"""
+        indicators = {}
+
+        try:
+            for timeframe, tf_data in stock_data.get("timeframes", {}).items():
+                if not tf_data or len(tf_data.get("close", [])) < 20:
+                    continue
+
+                import talib
+                import numpy as np
+
+                close_prices = np.array(tf_data["close"], dtype=float)
+                high_prices = np.array(tf_data.get("high", close_prices), dtype=float)
+                low_prices = np.array(tf_data.get("low", close_prices), dtype=float)
+                volume = np.array(tf_data.get("volume", [1] * len(close_prices)), dtype=float)
+
+                # Calculate common indicators
+                tf_indicators = {}
+
+                # Moving averages
+                tf_indicators["sma_20"] = talib.SMA(close_prices, timeperiod=20).tolist()
+                tf_indicators["ema_9"] = talib.EMA(close_prices, timeperiod=9).tolist()
+                tf_indicators["ema_21"] = talib.EMA(close_prices, timeperiod=21).tolist()
+
+                # RSI
+                tf_indicators["rsi_14"] = talib.RSI(close_prices, timeperiod=14).tolist()
+
+                # MACD
+                macd, signal, hist = talib.MACD(close_prices)
+                tf_indicators["macd"] = macd.tolist()
+                tf_indicators["macd_signal"] = signal.tolist()
+
+                # Bollinger Bands
+                upper, middle, lower = talib.BBANDS(close_prices)
+                tf_indicators["bb_upper"] = upper.tolist()
+                tf_indicators["bb_middle"] = middle.tolist()
+                tf_indicators["bb_lower"] = lower.tolist()
+
+                # VWAP (approximation using cumulative volume-weighted price)
+                if len(volume) == len(close_prices):
+                    typical_price = (high_prices + low_prices + close_prices) / 3
+                    vwap = np.cumsum(typical_price * volume) / np.cumsum(volume)
+                    tf_indicators["vwap"] = vwap.tolist()
+
+                indicators[f"{timeframe}_indicators"] = tf_indicators
+
+        except Exception as e:
+            logger.error(f"Error calculating indicators: {e}")
+
+        return indicators
+
+    async def _generate_strategy_signals(
+        self, account: TradingAccount, stock: Stock, stock_data: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """Generate trading signals based on strategies"""
+        signals = {}
+
+        try:
+            # Get strategies for this account
+            session = self.session_factory()
+            try:
+                account_strategies = session.query(Strategy).filter(
+                    Strategy.is_active == True
+                ).all()
+
+                for strategy in account_strategies:
+                    # Use strategy factory to generate signals
+                    strategy_obj = self.strategy_factory.get_strategy(strategy.name)
+                    if strategy_obj:
+                        signal = await strategy_obj.generate_signal(stock_data)
+                        signals[strategy.name] = signal
+
+            finally:
+                session.close()
+
+        except Exception as e:
+            logger.error(f"Error generating strategy signals: {e}")
+
+        return signals
+
+    async def _create_invocation_record(
+        self, session: Session, account: TradingAccount,
+        market_context: Dict, portfolio_context: Dict
+    ) -> Invocation:
+        """Create invocation record in database"""
+        try:
+            invocation = Invocation(
+                account_id=account.id,
+                timestamp=datetime.utcnow(),
+                market_context=json.dumps(market_context),
+                portfolio_context=json.dumps(portfolio_context),
+                prompt="",  # Will be updated later
+                response="",  # Will be updated later
+                tokens_used=0,
+                execution_time_ms=0
+            )
+
+            session.add(invocation)
+            session.commit()
+            session.refresh(invocation)
+
+            return invocation
+
+        except Exception as e:
+            logger.error(f"Error creating invocation record: {e}")
+            session.rollback()
+            raise
+
+    async def _update_invocation_record(
+        self, session: Session, invocation: Invocation, llm_response: Dict
+    ):
+        """Update invocation record with LLM response"""
+        try:
+            invocation.response = json.dumps(llm_response.get("response", ""))
+            invocation.tokens_used = llm_response.get("tokens_used", 0)
+            invocation.execution_time_ms = llm_response.get("execution_time_ms", 0)
+
+            session.commit()
+
+        except Exception as e:
+            logger.error(f"Error updating invocation record: {e}")
+            session.rollback()
+
+    async def _log_tool_call(
+        self, session: Session, invocation: Invocation,
+        tool_name: str, tool_input: Dict, tool_output: Any, status: str
+    ):
+        """Log tool call to database"""
+        try:
+            tool_call = ToolCall(
+                invocation_id=invocation.id,
+                tool_name=tool_name,
+                tool_input=json.dumps(tool_input),
+                tool_output=str(tool_output),
+                status=status,
+                executed_at=datetime.utcnow()
+            )
+
+            session.add(tool_call)
+            session.commit()
+
+        except Exception as e:
+            logger.error(f"Error logging tool call: {e}")
+            session.rollback()
+
+    async def _execute_sell_order(
+        self, account: TradingAccount, symbol: str, quantity: int,
+        strategy: str, invocation: Invocation, session: Session
+    ):
+        """Execute sell order through Dhan API"""
+
+        # Get current price
+        current_price = await self.market_data_manager.get_current_price(symbol)
+
+        # Execute order through Dhan API
+        order_result = await self.dhan_client.place_sell_order(
+            account, symbol, quantity
+        )
+
+        # Find and update the trade record
+        trade = session.query(Trade).filter(
+            Trade.account_id == account.id,
+            Trade.stock_id == await self._get_stock_id(session, symbol),
+            Trade.status == "OPEN"
+        ).first()
+
+        if trade:
+            trade.exit_price = current_price
+            trade.status = "CLOSED"
+            trade.closed_at = datetime.utcnow()
+            trade.net_pnl = (current_price - trade.entry_price) * trade.quantity
+            session.commit()
+
+        return order_result
+
+    async def _close_all_positions(
+        self, account: TradingAccount, invocation: Invocation, session: Session
+    ):
+        """Close all open positions"""
+        results = []
+
+        try:
+            # Get all open trades
+            open_trades = session.query(Trade).filter(
+                Trade.account_id == account.id,
+                Trade.status == "OPEN"
+            ).all()
+
+            for trade in open_trades:
+                stock = session.query(Stock).filter(Stock.id == trade.stock_id).first()
+                if stock:
+                    result = await self._execute_sell_order(
+                        account, stock.symbol, trade.quantity, "", invocation, session
+                    )
+                    results.append(result)
+
+            return {"closed_positions": len(results), "details": results}
+
+        except Exception as e:
+            logger.error(f"Error closing all positions: {e}")
+            raise
+
+    async def _get_stock_id(self, session: Session, symbol: str) -> int:
+        """Get stock ID by symbol"""
+        stock = session.query(Stock).filter(Stock.symbol == symbol).first()
+        return stock.id if stock else None
+
+    async def _get_strategy_id(self, session: Session, strategy_name: str) -> int:
+        """Get strategy ID by name"""
+        strategy = session.query(Strategy).filter(Strategy.name == strategy_name).first()
+        return strategy.id if strategy else None

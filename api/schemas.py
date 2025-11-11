@@ -13,10 +13,10 @@ class TradeRequest(BaseModel):
     """Trade execution request"""
     account_id: str
     symbol: str
-    side: str = Field(..., regex="^(BUY|SELL)$")
+    side: str = Field(..., pattern="^(BUY|SELL)$")
     quantity: int = Field(..., gt=0)
     strategy: str
-    order_type: str = Field(default="MARKET", regex="^(MARKET|LIMIT)$")
+    order_type: str = Field(default="MARKET", pattern="^(MARKET|LIMIT)$")
     price: Optional[float] = None
 
 class AccountCreateRequest(BaseModel):
