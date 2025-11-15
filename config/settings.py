@@ -119,21 +119,36 @@ INDIAN_STOCKS = {
     }
 }
 
-# LLM Models Configuration
+# LLM Models Configuration - Both models trade same stocks with equal capital
 LLM_MODELS = {
     "primary": {
-        "name": "claude-3-5-sonnet",
+        "name": "qwen/qwen3-235b-a22b-2507",
+        "display_name": "Qwen 3 235B",
         "provider": "openrouter", 
-        "stocks": ["RELIANCE", "TCS", "INFY"],
-        "capital_allocation": 60,  # 60% of total capital
-        "strategies": ["vwap", "ema"]
+        "stocks": ["RELIANCE", "TCS", "INFY", "HDFCBANK", "ICICIBANK"],
+        "capital_allocation": 50,  # 50% = ₹10,000
+        "strategies": ["vwap", "ema"],
+        "reasoning_enabled": False,
+        "extra_headers": {
+            "HTTP-Referer": "ai-trading-system.local",
+            "X-Title": "AI Trading System - Indian Market"
+        },
+        "description": "Qwen 3 235B - VWAP and EMA strategies on all 5 stocks"
     },
     "secondary": {
-        "name": "gpt-4-turbo",
+        "name": "deepseek/deepseek-v3.2-exp",
+        "display_name": "DeepSeek v3.2 Experimental",
         "provider": "openrouter",
-        "stocks": ["HDFCBANK", "ICICIBANK"], 
-        "capital_allocation": 40,  # 40% of total capital
-        "strategies": ["rsi", "smc"]
+        "stocks": ["RELIANCE", "TCS", "INFY", "HDFCBANK", "ICICIBANK"], 
+        "capital_allocation": 50,  # 50% = ₹10,000
+        "strategies": ["vwap", "ema"],
+        "reasoning_enabled": True,
+        "extra_body": {"reasoning": {"enabled": True}},
+        "extra_headers": {
+            "HTTP-Referer": "ai-trading-system.local", 
+            "X-Title": "AI Trading System - Indian Market"
+        },
+        "description": "DeepSeek v3.2 with reasoning - VWAP and EMA strategies on all 5 stocks"
     }
 }
 
