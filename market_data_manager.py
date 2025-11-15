@@ -1,9 +1,12 @@
 import os
+import pandas as pd
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional
 from dotenv import load_dotenv
 from dhanhq import dhanhq
 import time
+from pathlib import Path
+import json
 
 load_dotenv()
 
@@ -48,6 +51,13 @@ class MarketDataManager:
         
         self.min_15_cache = {}
         self.min_15_cache_time = None
+        
+        # Simulation mode
+        self.simulation_mode = False
+        self.historical_data = {}
+        self.current_time_index = {}
+        self.data_dir = Path("historical_data")
+        self.simulation_start_time = None
         
     def is_market_open(self) -> bool:
         """Check if market is currently open"""
@@ -237,6 +247,10 @@ class MarketDataManager:
         Get data for all timeframes with intelligent caching
         Returns structured data ready for LLM context
         """
+        # Use simulation data if in simulation mode
+        if self.simulation_mode:
+            return self.get_simulation_data(symbol)
+        
         print(f"\n{'='*60}")
         print(f"Fetching multi-timeframe data for {symbol}")
         print(f"{'='*60}")
@@ -387,3 +401,286 @@ class MarketDataManager:
         print(f"15-min Cache: {len(self.min_15_cache)} symbols (Time: {self.min_15_cache_time})")
         print(f"5-min Cache: Never cached (always fresh)")
         print(f"{'='*60}\n")
+    
+    def fetch_and_save_historical_data(self, days: int = 7):
+        """Fetch last N days data and save to CSV files for simulation"""
+        print(f"Fetching {days} days of historical data for all symbols...")
+        
+        self.data_dir.mkdir(exist_ok=True)
+        
+        for symbol in self.symbols:
+            print(f"Fetching historical data for {symbol}")
+            
+            # Fetch all timeframes
+            timeframes = {
+                "5m": {"interval": 5, "days": days},
+                "15m": {"interval": 15, "days": days}, 
+                "1h": {"interval": 60, "days": days},
+                "daily": {"type": "daily", "days": days + 2}
+            }
+            
+            for tf_name, tf_config in timeframes.items():
+                try:
+                    if tf_config.get("type") == "daily":
+                        data = self._fetch_historical_daily(symbol, tf_config["days"])
+                    else:
+                        data = self._fetch_historical_intraday(symbol, tf_config["interval"], tf_config["days"])
+                    
+                    if data:
+                        # Convert to DataFrame and add indicators
+                        df = self._convert_to_dataframe(data)
+                        df = self._add_technical_indicators(df)
+                        
+                        # Save to CSV
+                        filename = f"{symbol}_{tf_name}.csv"
+                        filepath = self.data_dir / filename
+                        df.to_csv(filepath, index=False)
+                        print(f"Saved {len(df)} records to {filepath}")
+                    
+                except Exception as e:
+                    print(f"Error fetching {symbol} {tf_name}: {e}")
+        
+        print("Historical data fetch completed!")
+    
+    def _fetch_historical_daily(self, symbol: str, days: int) -> Optional[Dict]:
+        """Fetch historical daily data"""
+        security_id = self.security_ids.get(symbol)
+        if not security_id:
+            return None
+            
+        to_date = datetime.now().strftime("%Y-%m-%d")
+        from_date = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
+        
+        try:
+            response = self.dhan.historical_daily_data(
+                security_id=security_id,
+                exchange_segment="NSE_EQ", 
+                instrument_type="EQUITY",
+                from_date=from_date,
+                to_date=to_date
+            )
+            
+            if response and response.get('status') == 'success':
+                return response.get('data', {})
+        except Exception as e:
+            print(f"Error fetching daily data: {e}")
+        
+        return None
+    
+    def _fetch_historical_intraday(self, symbol: str, interval: int, days: int) -> Optional[Dict]:
+        """Fetch historical intraday data"""
+        security_id = self.security_ids.get(symbol)
+        if not security_id:
+            return None
+            
+        to_date = datetime.now().strftime("%Y-%m-%d")
+        from_date = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
+        
+        try:
+            response = self.dhan.intraday_minute_data(
+                security_id=security_id,
+                exchange_segment="NSE_EQ",
+                instrument_type="EQUITY",
+                from_date=from_date,
+                to_date=to_date,
+                interval=interval
+            )
+            
+            if response and response.get('status') == 'success':
+                return response.get('data', {})
+        except Exception as e:
+            print(f"Error fetching intraday data: {e}")
+        
+        return None
+    
+    def _convert_to_dataframe(self, data: Dict) -> pd.DataFrame:
+        """Convert Dhan API response to pandas DataFrame"""
+        if not data or not data.get('timestamp'):
+            return pd.DataFrame()
+        
+        df = pd.DataFrame({
+            'timestamp': pd.to_datetime(data['timestamp'], unit='s'),
+            'open': data['open'],
+            'high': data['high'], 
+            'low': data['low'],
+            'close': data['close'],
+            'volume': data['volume']
+        })
+        
+        return df.sort_values('timestamp')
+    
+    def _add_technical_indicators(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Add technical indicators to dataframe"""
+        if len(df) < 50:
+            return df
+        
+        try:
+            import talib
+            import numpy as np
+            
+            close = df['close'].astype(float).values
+            high = df['high'].astype(float).values
+            low = df['low'].astype(float).values
+            volume = df['volume'].astype(float).values
+            
+            # EMAs
+            df['ema_9'] = talib.EMA(close, timeperiod=9)
+            df['ema_21'] = talib.EMA(close, timeperiod=21)
+            
+            # RSI
+            df['rsi'] = talib.RSI(close, timeperiod=14)
+            
+            # VWAP
+            typical_price = (high + low + close) / 3
+            df['vwap'] = (typical_price * volume).cumsum() / volume.cumsum()
+            
+            # MACD
+            macd, signal, hist = talib.MACD(close)
+            df['macd'] = macd
+            df['macd_signal'] = signal
+            
+            return df
+            
+        except Exception as e:
+            print(f"Error adding indicators: {e}")
+            return df
+    
+    def start_simulation_mode(self):
+        """Start simulation mode using historical CSV data"""
+        print("Starting simulation mode...")
+        
+        self.simulation_mode = True
+        self.simulation_start_time = datetime.now()
+        
+        # Load all CSV files
+        self.historical_data = {}
+        self.current_time_index = {}
+        
+        for symbol in self.symbols:
+            self.historical_data[symbol] = {}
+            self.current_time_index[symbol] = {}
+            
+            timeframes = ["5m", "15m", "1h", "daily"]
+            
+            for tf in timeframes:
+                filepath = self.data_dir / f"{symbol}_{tf}.csv"
+                
+                if filepath.exists():
+                    df = pd.read_csv(filepath)
+                    df['timestamp'] = pd.to_datetime(df['timestamp'])
+                    df = df.sort_values('timestamp')
+                    
+                    self.historical_data[symbol][tf] = df
+                    self.current_time_index[symbol][tf] = 0
+                    
+                    print(f"Loaded {len(df)} records for {symbol} {tf}")
+                else:
+                    print(f"Warning: {filepath} not found")
+        
+        print("Simulation mode started!")
+    
+    def get_simulation_data(self, symbol: str) -> Dict:
+        """Get current simulation data (forward-only)"""
+        if not self.simulation_mode:
+            return self.get_all_timeframes(symbol)
+        
+        result = {
+            'symbol': symbol,
+            'timestamp': datetime.now().isoformat(),
+            'simulation_mode': True
+        }
+        
+        timeframes = {"daily": "daily", "hourly": "1h", "min_15": "15m", "min_5": "5m"}
+        
+        for result_key, tf_key in timeframes.items():
+            if symbol in self.historical_data and tf_key in self.historical_data[symbol]:
+                df = self.historical_data[symbol][tf_key]
+                current_idx = self.current_time_index[symbol][tf_key]
+                
+                # Get data up to current index (forward-only)
+                if current_idx < len(df):
+                    available_data = df.iloc[:current_idx + 1]
+                    
+                    if len(available_data) > 0:
+                        # Convert back to Dhan format
+                        result[result_key] = {
+                            'timestamp': [int(ts.timestamp()) for ts in available_data['timestamp']],
+                            'open': available_data['open'].tolist(),
+                            'high': available_data['high'].tolist(),
+                            'low': available_data['low'].tolist(),
+                            'close': available_data['close'].tolist(),
+                            'volume': available_data['volume'].tolist()
+                        }
+        
+        return result
+    
+    def advance_simulation(self, minutes: int = 5):
+        """Advance simulation by specified minutes"""
+        if not self.simulation_mode:
+            return
+        
+        for symbol in self.symbols:
+            if symbol not in self.current_time_index:
+                continue
+            
+            for tf in self.current_time_index[symbol]:
+                if symbol in self.historical_data and tf in self.historical_data[symbol]:
+                    df = self.historical_data[symbol][tf]
+                    current_idx = self.current_time_index[symbol][tf]
+                    
+                    # Calculate advancement based on timeframe
+                    if tf == "5m":
+                        advance_by = max(1, minutes // 5)
+                    elif tf == "15m":
+                        advance_by = max(1, minutes // 15)
+                    elif tf == "1h":
+                        advance_by = max(1, minutes // 60)
+                    elif tf == "daily":
+                        advance_by = 1 if minutes >= 1440 else 0
+                    else:
+                        advance_by = 1
+                    
+                    new_idx = min(current_idx + advance_by, len(df) - 1)
+                    self.current_time_index[symbol][tf] = new_idx
+    
+    def get_simulation_progress(self) -> float:
+        """Get simulation progress percentage"""
+        if not self.simulation_mode:
+            return 0.0
+        
+        total_progress = 0
+        count = 0
+        
+        for symbol in self.symbols:
+            if symbol in self.current_time_index:
+                for tf in self.current_time_index[symbol]:
+                    if symbol in self.historical_data and tf in self.historical_data[symbol]:
+                        df = self.historical_data[symbol][tf]
+                        current_idx = self.current_time_index[symbol][tf]
+                        
+                        if len(df) > 0:
+                            progress = (current_idx / len(df)) * 100
+                            total_progress += progress
+                            count += 1
+        
+        return total_progress / count if count > 0 else 0.0
+    
+    def get_current_simulation_time(self) -> Optional[datetime]:
+        """Get current simulation timestamp"""
+        if not self.simulation_mode:
+            return None
+        
+        # Use 5m data from first symbol to determine current time
+        first_symbol = self.symbols[0] if self.symbols else None
+        
+        if (first_symbol and 
+            first_symbol in self.historical_data and 
+            "5m" in self.historical_data[first_symbol]):
+            
+            df = self.historical_data[first_symbol]["5m"]
+            current_idx = self.current_time_index[first_symbol]["5m"]
+            
+            if current_idx < len(df):
+                return df.iloc[current_idx]['timestamp']
+        
+        return None

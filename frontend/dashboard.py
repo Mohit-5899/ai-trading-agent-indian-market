@@ -116,8 +116,8 @@ def main():
     # Initialize dashboard
     dashboard = TradingDashboard()
     
-    # Auto-refresh every 30 seconds
-    st_autorefresh(interval=30000, key="dashboard_refresh")
+    # Auto-refresh every 5 seconds for live trading
+    st_autorefresh(interval=5000, key="dashboard_refresh")
     
     # Header
     st.markdown("""
@@ -139,14 +139,14 @@ def main():
             default_index=0,
             styles={
                 "container": {"padding": "0!important", "background-color": "#fafafa"},
-                "icon": {"color": "orange", "font-size": "25px"},
-                "nav-link": {"font-size": "16px", "text-align": "left", "margin": "0px", "--hover-color": "#eee"},
-                "nav-link-selected": {"background-color": "#02ab21"},
+                "icon": {"color": "#1f2937", "font-size": "25px"},
+                "nav-link": {"font-size": "16px", "text-align": "left", "margin": "0px", "--hover-color": "#e5e7eb", "color": "#374151"},
+                "nav-link-selected": {"background-color": "#3b82f6", "color": "white"},
             }
         )
         
         # System status in sidebar
-        st.subheader("System Status")
+        st.markdown("<h3 style='color: #1f2937;'>System Status</h3>", unsafe_allow_html=True)
         status_data = dashboard.get_system_status()
         
         if status_data:
@@ -179,94 +179,265 @@ def main():
         show_system_control(dashboard)
 
 def show_dashboard(dashboard):
-    """Show main dashboard overview"""
-    st.header("📊 Trading Overview")
+    """Live Trading Dashboard - Alpha Arena Style"""
     
-    # Get data
-    accounts = dashboard.get_accounts()
-    performance_data = dashboard.get_portfolio_performance(days=7)  # Last 7 days
-    recent_invocations = dashboard.get_recent_invocations(limit=5)
+    # Current time and countdown
+    current_time = datetime.now()
+    market_open = current_time.replace(hour=9, minute=15, second=0, microsecond=0)
+    market_close = current_time.replace(hour=15, minute=30, second=0, microsecond=0)
     
-    if not accounts:
-        st.error("No trading accounts found")
-        return
+    # Calculate time to market close
+    if current_time < market_open:
+        time_to_open = market_open - current_time
+        countdown_text = f"Market opens in: {str(time_to_open).split('.')[0]}"
+        market_status = "🔴 PRE-MARKET"
+    elif current_time > market_close:
+        time_to_next_open = (market_open + timedelta(days=1)) - current_time
+        countdown_text = f"Market opens in: {str(time_to_next_open).split('.')[0]}"
+        market_status = "🔴 CLOSED"
+    else:
+        time_to_close = market_close - current_time
+        countdown_text = f"Market closes in: {str(time_to_close).split('.')[0]}"
+        market_status = "🟢 LIVE"
     
-    # Account metrics
-    col1, col2, col3, col4 = st.columns(4)
-    
-    total_capital = sum(float(acc.get("capital_allocation", 0)) for acc in accounts)
-    active_accounts = len(accounts)
+    # Header with live status
+    col1, col2, col3 = st.columns([2, 1, 1])
     
     with col1:
-        st.metric("Total Capital", f"₹{total_capital:,.0f}")
+        st.markdown(f"""
+        <h1 style="color: #1f2937; margin: 0;">🤖 AI Trading Arena - Indian Market</h1>
+        <p style="color: #6b7280; margin: 0;">Multi-LLM Live Trading Competition</p>
+        """, unsafe_allow_html=True)
     
     with col2:
-        st.metric("Active Accounts", active_accounts)
+        st.markdown(f"""
+        <div style="text-align: center; padding: 1rem; background: #f3f4f6; border-radius: 0.5rem;">
+            <h3 style="margin: 0; color: #374151;">{market_status}</h3>
+        </div>
+        """, unsafe_allow_html=True)
     
     with col3:
-        if performance_data and len(performance_data) > 1:
-            latest_value = performance_data[-1]["total_value"]
-            previous_value = performance_data[0]["total_value"]
-            change = latest_value - previous_value
-            change_pct = (change / previous_value) * 100 if previous_value > 0 else 0
-            st.metric("7-Day P&L", f"₹{change:,.2f}", f"{change_pct:+.2f}%")
-        else:
-            st.metric("7-Day P&L", "₹0.00", "0.00%")
+        st.markdown(f"""
+        <div style="text-align: center; padding: 1rem; background: #fef3c7; border-radius: 0.5rem;">
+            <h4 style="margin: 0; color: #92400e;">COUNTDOWN</h4>
+            <p style="margin: 0; color: #92400e; font-weight: bold;">{countdown_text}</p>
+        </div>
+        """, unsafe_allow_html=True)
     
-    with col4:
-        total_invocations = sum(acc.get("invocation_count", 0) for acc in accounts)
-        st.metric("Total Invocations", total_invocations)
+    # Get live data
+    accounts = dashboard.get_accounts()
+    performance_data = dashboard.get_portfolio_performance(days=7)
+    system_status = dashboard.get_system_status()
     
-    # Charts row
-    col1, col2 = st.columns(2)
+    if not accounts:
+        st.error("⚠️ No trading accounts found")
+        return
+    
+    # Live metrics bar
+    col1, col2, col3, col4, col5 = st.columns(5)
+    
+    # Calculate live metrics
+    qwen_account = next((acc for acc in accounts if 'qwen' in acc.get('name', '').lower()), None)
+    deepseek_account = next((acc for acc in accounts if 'deepseek' in acc.get('name', '').lower()), None)
     
     with col1:
-        st.subheader("📈 Portfolio Performance (7 Days)")
-        if performance_data and len(performance_data) > 1:
-            df = pd.DataFrame(performance_data)
-            df['timestamp'] = pd.to_datetime(df['timestamp'])
-            
-            fig = px.line(
-                df, 
-                x='timestamp', 
-                y='total_value',
-                title="Portfolio Value Over Time"
-            )
-            fig.update_layout(
-                xaxis_title="Time",
-                yaxis_title="Portfolio Value (₹)",
-                showlegend=False
-            )
-            st.plotly_chart(fig, use_container_width=True)
+        btc_style = "color: #1f2937; font-weight: bold; font-size: 1.2em;"
+        st.markdown(f'<p style="{btc_style}">🤖 QWN</p>', unsafe_allow_html=True)
+        if qwen_account:
+            st.markdown(f"<h3 style='margin: 0; color: #374151;'>₹{qwen_account['capital_allocation']:,.0f}</h3>", unsafe_allow_html=True)
         else:
-            st.info("No performance data available")
+            st.markdown("<h3 style='margin: 0; color: #374151;'>₹10,000</h3>", unsafe_allow_html=True)
     
     with col2:
-        st.subheader("🧠 Recent LLM Decisions")
-        if recent_invocations:
-            for invocation in recent_invocations[:3]:
-                with st.container():
-                    st.markdown(f"""
-                    <div style="border: 1px solid #e5e7eb; border-radius: 0.5rem; padding: 1rem; margin: 0.5rem 0;">
-                        <strong>{invocation['account_name']}</strong><br>
-                        <small>{invocation['created_at']}</small><br>
-                        Tool calls: {len(invocation.get('tool_calls', []))}
-                    </div>
-                    """, unsafe_allow_html=True)
+        eth_style = "color: #1f2937; font-weight: bold; font-size: 1.2em;"
+        st.markdown(f'<p style="{eth_style}">🧠 DPK</p>', unsafe_allow_html=True)
+        if deepseek_account:
+            st.markdown(f"<h3 style='margin: 0; color: #374151;'>₹{deepseek_account['capital_allocation']:,.0f}</h3>", unsafe_allow_html=True)
         else:
-            st.info("No recent LLM decisions")
+            st.markdown("<h3 style='margin: 0; color: #374151;'>₹10,000</h3>", unsafe_allow_html=True)
     
-    # Account overview
-    st.subheader("💼 Account Overview")
-    if accounts:
-        account_df = pd.DataFrame(accounts)
-        account_df = account_df[['name', 'model_name', 'capital_allocation', 'allocation_percentage', 'invocation_count']]
-        account_df.columns = ['Account', 'LLM Model', 'Capital (₹)', 'Allocation %', 'Invocations']
-        st.dataframe(account_df, use_container_width=True)
+    with col3:
+        rel_style = "color: #1f2937; font-weight: bold; font-size: 1.2em;"
+        st.markdown(f'<p style="{rel_style}">📈 REL</p>', unsafe_allow_html=True)
+        st.markdown("<h3 style='margin: 0; color: #374151;'>₹2,400</h3>", unsafe_allow_html=True)
+    
+    with col4:
+        tcs_style = "color: #1f2937; font-weight: bold; font-size: 1.2em;"
+        st.markdown(f'<p style="{tcs_style}">💼 TCS</p>', unsafe_allow_html=True)
+        st.markdown("<h3 style='margin: 0; color: #374151;'>₹3,200</h3>", unsafe_allow_html=True)
+    
+    with col5:
+        infy_style = "color: #1f2937; font-weight: bold; font-size: 1.2em;"
+        st.markdown(f'<p style="{infy_style}">🔮 INFY</p>', unsafe_allow_html=True)
+        st.markdown("<h3 style='margin: 0; color: #374151;'>₹1,800</h3>", unsafe_allow_html=True)
+    
+    # Main portfolio chart - Alpha Arena style
+    st.markdown("<h3 style='color: #1f2937;'>📊 LIVE PORTFOLIO PERFORMANCE</h3>", unsafe_allow_html=True)
+    
+    if performance_data and len(performance_data) > 1:
+        df = pd.DataFrame(performance_data)
+        df['timestamp'] = pd.to_datetime(df['timestamp'])
+        
+        # Create multi-line chart like Alpha Arena
+        fig = go.Figure()
+        
+        # Add Qwen portfolio line
+        qwen_data = [row for row in performance_data if 'qwen' in row.get('account_id', '').lower()]
+        if qwen_data:
+            qwen_df = pd.DataFrame(qwen_data)
+            qwen_df['timestamp'] = pd.to_datetime(qwen_df['timestamp'])
+            fig.add_trace(go.Scatter(
+                x=qwen_df['timestamp'],
+                y=qwen_df['total_value'],
+                mode='lines',
+                name='Qwen 3 235B',
+                line=dict(color='#f97316', width=3),
+                hovertemplate='<b>Qwen</b><br>Time: %{x}<br>Value: ₹%{y:,.2f}<extra></extra>'
+            ))
+        
+        # Add DeepSeek portfolio line
+        deepseek_data = [row for row in performance_data if 'deepseek' in row.get('account_id', '').lower()]
+        if deepseek_data:
+            deepseek_df = pd.DataFrame(deepseek_data)
+            deepseek_df['timestamp'] = pd.to_datetime(deepseek_df['timestamp'])
+            fig.add_trace(go.Scatter(
+                x=deepseek_df['timestamp'],
+                y=deepseek_df['total_value'],
+                mode='lines',
+                name='DeepSeek v3.2',
+                line=dict(color='#8b5cf6', width=3),
+                hovertemplate='<b>DeepSeek</b><br>Time: %{x}<br>Value: ₹%{y:,.2f}<extra></extra>'
+            ))
+        
+        # Add combined portfolio line if no individual data
+        if not qwen_data and not deepseek_data:
+            fig.add_trace(go.Scatter(
+                x=df['timestamp'],
+                y=df['total_value'],
+                mode='lines',
+                name='Combined Portfolio',
+                line=dict(color='#10b981', width=3),
+                hovertemplate='<b>Total</b><br>Time: %{x}<br>Value: ₹%{y:,.2f}<extra></extra>'
+            ))
+        
+        # Style like Alpha Arena
+        fig.update_layout(
+            height=500,
+            plot_bgcolor='rgba(0,0,0,0)',
+            paper_bgcolor='rgba(0,0,0,0)',
+            xaxis=dict(
+                title="Time",
+                gridcolor='rgba(128,128,128,0.2)',
+                showgrid=True,
+                zeroline=False
+            ),
+            yaxis=dict(
+                title="Portfolio Value (₹)",
+                gridcolor='rgba(128,128,128,0.2)',
+                showgrid=True,
+                zeroline=False
+            ),
+            legend=dict(
+                orientation="h",
+                yanchor="bottom",
+                y=1.02,
+                xanchor="right",
+                x=1
+            ),
+            hovermode='x unified',
+            margin=dict(l=0, r=0, t=40, b=0)
+        )
+        
+        st.plotly_chart(fig, use_container_width=True)
+    else:
+        # Show placeholder chart
+        fig = go.Figure()
+        fig.add_trace(go.Scatter(
+            x=[datetime.now() - timedelta(hours=6), datetime.now()],
+            y=[10000, 10000],
+            mode='lines',
+            name='Waiting for data...',
+            line=dict(color='gray', width=2, dash='dash')
+        ))
+        fig.update_layout(
+            height=400,
+            plot_bgcolor='rgba(0,0,0,0)',
+            xaxis=dict(title="Time"),
+            yaxis=dict(title="Portfolio Value (₹)"),
+            showlegend=False
+        )
+        st.plotly_chart(fig, use_container_width=True)
+    
+    # Live trading status and activity
+    col1, col2 = st.columns([2, 1])
+    
+    with col1:
+        st.markdown("<h3 style='color: #1f2937;'>⚡ LIVE TRADING ACTIVITY</h3>", unsafe_allow_html=True)
+        recent_trades = dashboard.get_trades(limit=10)
+        
+        if recent_trades:
+            for i, trade in enumerate(recent_trades[:5]):
+                trade_time = pd.to_datetime(trade['executed_at']).strftime('%H:%M:%S')
+                side_color = '#10b981' if trade['side'] == 'BUY' else '#ef4444'
+                model_name = 'QWN' if 'qwen' in trade.get('account_name', '').lower() else 'DPK'
+                
+                st.markdown(f"""
+                <div style="padding: 0.5rem; margin: 0.25rem 0; border-left: 4px solid {side_color}; background: #f9fafb;">
+                    <strong style="color: {side_color};">{trade['side']}</strong> 
+                    <span style="color: #374151;">{trade['stock_symbol']} x{trade['quantity']} 
+                    @ ₹{trade['entry_price']:.2f}</span> 
+                    <small style="color: #6b7280;">({model_name} - {trade_time})</small>
+                </div>
+                """, unsafe_allow_html=True)
+        else:
+            st.info("No recent trading activity")
+    
+    with col2:
+        st.markdown("<h3 style='color: #1f2937;'>🏆 LEADERBOARD</h3>", unsafe_allow_html=True)
+        
+        # Model performance comparison
+        qwen_pnl = 0
+        deepseek_pnl = 0
+        
+        if performance_data:
+            for row in performance_data[-5:]:  # Last 5 data points
+                if 'qwen' in row.get('account_id', '').lower():
+                    qwen_pnl = row.get('total_pnl', 0)
+                elif 'deepseek' in row.get('account_id', '').lower():
+                    deepseek_pnl = row.get('total_pnl', 0)
+        
+        models = [
+            ("🥇 Qwen 3 235B", qwen_pnl, '#f97316'),
+            ("🥈 DeepSeek v3.2", deepseek_pnl, '#8b5cf6')
+        ]
+        
+        # Sort by performance
+        models.sort(key=lambda x: x[1], reverse=True)
+        
+        for rank, (name, pnl, color) in enumerate(models):
+            pnl_pct = (pnl / 10000) * 100 if pnl != 0 else 0
+            st.markdown(f"""
+            <div style="padding: 1rem; margin: 0.5rem 0; border: 2px solid {color}; border-radius: 0.5rem;">
+                <h4 style="margin: 0; color: {color};">{name}</h4>
+                <p style="margin: 0; color: #374151;">P&L: ₹{pnl:,.2f}</p>
+                <p style="margin: 0; color: #374151;">Return: {pnl_pct:+.2f}%</p>
+            </div>
+            """, unsafe_allow_html=True)
+    
+    # Market status footer
+    status_text = "🟢 All systems operational" if system_status and system_status.get("status") == "healthy" else "⚠️ System issues detected"
+    st.markdown(f"""
+    <div style="text-align: center; padding: 1rem; margin-top: 2rem; background: #f3f4f6; border-radius: 0.5rem;">
+        <p style="margin: 0; color: #6b7280;">
+            {status_text} | Live data updates every 5 seconds | 
+            Trading Session: {current_time.strftime('%Y-%m-%d %H:%M:%S')}
+        </p>
+    </div>
+    """, unsafe_allow_html=True)
 
 def show_portfolio(dashboard):
     """Show portfolio performance details"""
-    st.header("💼 Portfolio Performance")
+    st.markdown("<h1 style='color: #1f2937;'>💼 Portfolio Performance</h1>", unsafe_allow_html=True)
     
     # Time period selector
     time_period = st.selectbox(
@@ -310,7 +481,7 @@ def show_portfolio(dashboard):
         st.metric("Invested Amount", f"₹{latest['invested_amount']:,.2f}")
     
     # Performance chart
-    st.subheader("📊 Portfolio Value Over Time")
+    st.markdown("<h3 style='color: #1f2937;'>📊 Portfolio Value Over Time</h3>", unsafe_allow_html=True)
     
     fig = go.Figure()
     
@@ -334,7 +505,7 @@ def show_portfolio(dashboard):
     
     # P&L Chart
     if 'day_pnl' in df.columns:
-        st.subheader("📈 Daily P&L")
+        st.markdown("<h3 style='color: #1f2937;'>📈 Daily P&L</h3>", unsafe_allow_html=True)
         
         fig_pnl = px.bar(
             df,
@@ -349,7 +520,7 @@ def show_portfolio(dashboard):
 
 def show_trades(dashboard):
     """Show trading history"""
-    st.header("💹 Trading History")
+    st.markdown("<h1 style='color: #1f2937;'>💹 Trading History</h1>", unsafe_allow_html=True)
     
     # Filters
     col1, col2, col3 = st.columns(3)
@@ -402,7 +573,7 @@ def show_trades(dashboard):
             st.metric("Open Positions", open_trades)
     
     # Trades table
-    st.subheader("📋 Trades")
+    st.markdown("<h3 style='color: #1f2937;'>📋 Trades</h3>", unsafe_allow_html=True)
     
     if not df.empty:
         # Format the dataframe for display
@@ -430,7 +601,7 @@ def show_trades(dashboard):
 
 def show_llm_decisions(dashboard):
     """Show LLM decision history"""
-    st.header("🧠 LLM Decision History")
+    st.markdown("<h1 style='color: #1f2937;'>🧠 LLM Decision History</h1>", unsafe_allow_html=True)
     
     # Controls
     col1, col2 = st.columns(2)
@@ -500,7 +671,7 @@ def show_llm_decisions(dashboard):
 
 def show_system_control(dashboard):
     """Show system control panel"""
-    st.header("⚙️ System Control")
+    st.markdown("<h1 style='color: #1f2937;'>⚙️ System Control</h1>", unsafe_allow_html=True)
     
     # System status
     status_data = dashboard.get_system_status()
@@ -533,7 +704,7 @@ def show_system_control(dashboard):
             st.warning("⏸️ Trading: Disabled")
     
     # Control buttons
-    st.subheader("🎮 Trading Controls")
+    st.markdown("<h3 style='color: #1f2937;'>🎮 Trading Controls</h3>", unsafe_allow_html=True)
     
     col1, col2, col3 = st.columns(3)
     
@@ -558,7 +729,7 @@ def show_system_control(dashboard):
             st.rerun()
     
     # System information
-    st.subheader("📊 System Information")
+    st.markdown("<h3 style='color: #1f2937;'>📊 System Information</h3>", unsafe_allow_html=True)
     
     if status_data:
         info_df = pd.DataFrame([
@@ -573,7 +744,7 @@ def show_system_control(dashboard):
         st.dataframe(info_df, use_container_width=True, hide_index=True)
     
     # Danger zone
-    st.subheader("⚠️ Danger Zone")
+    st.markdown("<h3 style='color: #dc2626;'>⚠️ Danger Zone</h3>", unsafe_allow_html=True)
     
     with st.expander("Emergency Controls"):
         st.warning("These actions are irreversible. Use with caution!")

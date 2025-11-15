@@ -24,7 +24,7 @@ logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.FileHandler('trading_system.log'),
+        logging.FileHandler('/app/logs/trading_system.log'),
         logging.StreamHandler(sys.stdout)
     ]
 )
