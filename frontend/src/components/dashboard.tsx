@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import {
   Line,
   LineChart,
@@ -11,10 +11,23 @@ import {
   YAxis,
 } from "recharts";
 import { format } from "date-fns";
-import type { ChartPoint, MultiAssetPerformance } from "@/lib/types";
+import type {
+  ChartPoint,
+  HistoricalDashboardData,
+  HistoricalTimeframe,
+  MultiAssetPerformance,
+} from "@/lib/types";
 
 type ChartMode = "value" | "percentage";
-type TimeRange = "all" | "72h";
+
+const ORDERED_TIMEFRAMES: HistoricalTimeframe[] = ["5m", "15m", "1h", "daily"];
+
+const TIMEFRAME_LABELS: Record<HistoricalTimeframe, string> = {
+  "5m": "5 Min",
+  "15m": "15 Min",
+  "1h": "1 Hour",
+  daily: "1 Day",
+};
 
 const SERIES_PALETTE = [
   "#7c3aed",
@@ -27,33 +40,14 @@ const SERIES_PALETTE = [
   "#eab308",
 ];
 
-const TICKERS = [
-  { symbol: "BTC", price: 105896.5, change: 1.2 },
-  { symbol: "ETH", price: 3547.25, change: -0.8 },
-  { symbol: "SOL", price: 166.78, change: 3.4 },
-  { symbol: "BNB", price: 984.29, change: 0.5 },
-  { symbol: "DOGE", price: 0.1795, change: -2.1 },
-  { symbol: "XRP", price: 2.54, change: 4.2 },
-];
-
-const SEASON_ONE_CONCLUDED = new Date("2025-11-03T22:00:00Z");
-const SEASON_ONE_POINT_FIVE = new Date("2025-11-21T22:00:00Z");
-
 type DashboardProps = {
-  data: MultiAssetPerformance;
-};
-
-type Countdown = {
-  days: number;
-  hours: number;
-  minutes: number;
-  seconds: number;
+  data: HistoricalDashboardData;
 };
 
 function formatCurrency(value: number) {
-  return Intl.NumberFormat("en-US", {
+  return Intl.NumberFormat("en-IN", {
     style: "currency",
-    currency: "USD",
+    currency: "INR",
     maximumFractionDigits: value >= 1000 ? 0 : 2,
   }).format(value);
 }
@@ -83,61 +77,75 @@ function buildPoints(dataset: MultiAssetPerformance | null): ChartPoint[] {
   });
 }
 
-function getCountdown(target: Date, now: Date): Countdown {
-  const diffMs = Math.max(target.getTime() - now.getTime(), 0);
-  const totalSeconds = Math.floor(diffMs / 1000);
-  const days = Math.floor(totalSeconds / (24 * 3600));
-  const hours = Math.floor((totalSeconds % (24 * 3600)) / 3600);
-  const minutes = Math.floor((totalSeconds % 3600) / 60);
-  const seconds = totalSeconds % 60;
-
-  return { days, hours, minutes, seconds };
-}
-
 export function Dashboard({ data }: DashboardProps) {
   const [chartMode, setChartMode] = useState<ChartMode>("value");
-  const [timeRange, setTimeRange] = useState<TimeRange>("all");
-  const [now, setNow] = useState(() => new Date());
+  const [timeframe, setTimeframe] = useState<HistoricalTimeframe>(() => {
+    const available = ORDERED_TIMEFRAMES.filter(
+      (tf) => data.timeframes[tf]?.timestamps?.length
+    );
+    if (available.includes(data.defaultTimeframe)) {
+      return data.defaultTimeframe;
+    }
+    return available[0] ?? ORDERED_TIMEFRAMES[0];
+  });
 
-  useEffect(() => {
-    const interval = window.setInterval(() => setNow(new Date()), 1000);
-    return () => window.clearInterval(interval);
-  }, []);
+  const availableTimeframes = useMemo(
+    () =>
+      ORDERED_TIMEFRAMES.filter(
+        (tf) => data.timeframes[tf]?.timestamps?.length
+      ),
+    [data.timeframes]
+  );
 
-  const rawPoints = useMemo(() => buildPoints(data), [data]);
+  const symbolList = useMemo(
+    () => data.tickers.map((ticker) => ticker.symbol).join(", "),
+    [data.tickers]
+  );
 
-  const filteredPoints = useMemo(() => {
-    if (timeRange === "all" || rawPoints.length === 0) {
-      return rawPoints;
+  const activeDataset = useMemo<MultiAssetPerformance>(() => {
+    const preferred = data.timeframes[timeframe];
+    if (preferred?.timestamps?.length) {
+      return preferred;
     }
 
-    const cutoff = now.getTime() - 72 * 3600 * 1000;
-    return rawPoints.filter(
-      (point) => new Date(point.timestamp).getTime() >= cutoff,
-    );
-  }, [rawPoints, timeRange, now]);
+    for (const candidate of availableTimeframes) {
+      const dataset = data.timeframes[candidate];
+      if (dataset?.timestamps?.length) {
+        return dataset;
+      }
+    }
+
+    return {
+      timestamps: [],
+      total_value: [],
+      assets: {},
+      metadata: { time_range: timeframe, data_points: 0 },
+    };
+  }, [data.timeframes, timeframe, availableTimeframes]);
+
+  const rawPoints = useMemo(() => buildPoints(activeDataset), [activeDataset]);
 
   const seriesKeys = useMemo(() => {
-    if (filteredPoints.length === 0) return [];
-    return Object.keys(filteredPoints[0]).filter((key) => key !== "timestamp");
-  }, [filteredPoints]);
+    if (rawPoints.length === 0) return [];
+    return Object.keys(rawPoints[0]).filter((key) => key !== "timestamp");
+  }, [rawPoints]);
 
   const baseValues = useMemo(() => {
-    if (filteredPoints.length === 0) return {} as Record<string, number>;
-    const firstPoint = filteredPoints[0];
+    if (rawPoints.length === 0) return {} as Record<string, number>;
+    const firstPoint = rawPoints[0];
     return Object.fromEntries(
       Object.entries(firstPoint)
         .filter(([key]) => key !== "timestamp")
-        .map(([key, value]) => [key, Number(value) || 0]),
+        .map(([key, value]) => [key, Number(value) || 0])
     );
-  }, [filteredPoints]);
+  }, [rawPoints]);
 
   const processedPoints = useMemo(() => {
-    if (chartMode === "value" || filteredPoints.length === 0) {
-      return filteredPoints;
+    if (chartMode === "value" || rawPoints.length === 0) {
+      return rawPoints;
     }
 
-    return filteredPoints.map((point) => {
+    return rawPoints.map((point) => {
       const nextPoint: ChartPoint = { timestamp: point.timestamp };
       for (const key of seriesKeys) {
         const current = Number(point[key] ?? 0);
@@ -147,7 +155,43 @@ export function Dashboard({ data }: DashboardProps) {
       }
       return nextPoint;
     });
-  }, [chartMode, filteredPoints, seriesKeys, baseValues]);
+  }, [chartMode, rawPoints, seriesKeys, baseValues]);
+
+  const activeMetadata = activeDataset.metadata ?? {};
+  const timeframeLabel = TIMEFRAME_LABELS[timeframe] ?? timeframe;
+  const tooltipDatePattern =
+    timeframe === "daily" ? "MMM d, yyyy" : "MMM d, yyyy HH:mm";
+  const xAxisFormatter = useMemo(
+    () => (value: string) => {
+      const date = new Date(value);
+      if (Number.isNaN(date.getTime())) {
+        return value;
+      }
+      if (timeframe === "daily") {
+        return format(date, "MMM d");
+      }
+      return format(date, "MMM d HH:mm");
+    },
+    [timeframe]
+  );
+
+  const startDateLabel =
+    activeMetadata.start_date &&
+    !Number.isNaN(Date.parse(activeMetadata.start_date))
+      ? format(new Date(activeMetadata.start_date), tooltipDatePattern)
+      : "—";
+  const endDateLabel =
+    activeMetadata.end_date &&
+    !Number.isNaN(Date.parse(activeMetadata.end_date))
+      ? format(new Date(activeMetadata.end_date), tooltipDatePattern)
+      : "—";
+  const dataPointsCount = activeMetadata.data_points ?? rawPoints.length;
+  const latestTimestamp =
+    rawPoints.length > 0 ? rawPoints[rawPoints.length - 1].timestamp : null;
+  const lastUpdatedLabel =
+    latestTimestamp && !Number.isNaN(Date.parse(latestTimestamp))
+      ? format(new Date(latestTimestamp), tooltipDatePattern)
+      : "—";
 
   const colorMap = useMemo(() => {
     const map: Record<string, string> = {};
@@ -165,7 +209,7 @@ export function Dashboard({ data }: DashboardProps) {
     if (rawPoints.length === 0) return {} as Record<string, number>;
     const lastPoint = rawPoints[rawPoints.length - 1];
     return Object.fromEntries(
-      seriesKeys.map((key) => [key, Number(lastPoint[key] ?? 0)]),
+      seriesKeys.map((key) => [key, Number(lastPoint[key] ?? 0)])
     );
   }, [rawPoints, seriesKeys]);
 
@@ -175,46 +219,46 @@ export function Dashboard({ data }: DashboardProps) {
   const totalChangePct =
     totalFirst === 0 ? 0 : (totalChange / totalFirst) * 100;
 
-  const countdown = getCountdown(SEASON_ONE_POINT_FIVE, now);
-
   return (
     <div className="flex min-h-screen flex-col bg-[#f6f1ea] text-[#1f1a12]">
       <header className="border-b border-[#d4c2a8]/70 bg-[#f9f3ea] px-6 py-4">
         <div className="mx-auto flex max-w-6xl flex-col gap-4">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="text-xl font-semibold tracking-tight">
-              Alpha Arena <span className="font-normal">by</span>{" "}
-              <span className="font-bold italic">Nofi</span>
+              AI Trading Agent <span className="font-normal">·</span>{" "}
+              <span className="font-bold italic">Indian Equities</span>
             </div>
             <nav className="flex items-center gap-6 text-sm font-medium uppercase tracking-[0.2em] text-[#5a4431]">
               <a className="hover:text-black" href="#">
-                Live
+                Overview
               </a>
               <a className="hover:text-black" href="#">
-                Blog
+                Strategies
               </a>
               <a className="hover:text-black" href="#">
-                About Nofi
+                Research
               </a>
             </nav>
           </div>
           <div className="flex flex-wrap gap-3 text-sm">
-            {TICKERS.map((ticker) => (
-              <div
-                key={ticker.symbol}
-                className="flex items-center gap-2 rounded-full border border-[#d4c2a8] bg-white/70 px-4 py-1.5 shadow-sm"
-              >
-                <span className="font-semibold">{ticker.symbol}</span>
-                <span>{ticker.price.toLocaleString()}</span>
-                <span
-                  className={`text-xs font-semibold ${
-                    ticker.change >= 0 ? "text-emerald-600" : "text-rose-600"
-                  }`}
+            {data.tickers.map((ticker) => {
+              const changeClass =
+                ticker.changePct >= 0 ? "text-emerald-600" : "text-rose-600";
+              const direction = ticker.changePct >= 0 ? "▲" : "▼";
+              const absoluteChange = Math.abs(ticker.changePct).toFixed(2);
+              return (
+                <div
+                  key={ticker.symbol}
+                  className="flex items-center gap-2 rounded-full border border-[#d4c2a8] bg-white/70 px-4 py-1.5 shadow-sm"
                 >
-                  {ticker.change >= 0 ? "▲" : "▼"} {Math.abs(ticker.change)}%
-                </span>
-              </div>
-            ))}
+                  <span className="font-semibold">{ticker.symbol}</span>
+                  <span>{formatCurrency(ticker.price)}</span>
+                  <span className={`text-xs font-semibold ${changeClass}`}>
+                    {direction} {absoluteChange}%
+                  </span>
+                </div>
+              );
+            })}
           </div>
         </div>
       </header>
@@ -234,7 +278,7 @@ export function Dashboard({ data }: DashboardProps) {
                     }`}
                     onClick={() => setChartMode("value")}
                   >
-                    $
+                    ₹
                   </button>
                   <button
                     type="button"
@@ -249,33 +293,27 @@ export function Dashboard({ data }: DashboardProps) {
                   </button>
                 </div>
                 <h2 className="text-2xl font-semibold uppercase tracking-[0.4em] text-[#1f1a12]/90">
-                  Total Account Value
+                  Combined Market Value
                 </h2>
-                <p className="text-sm text-[#5a4431]/70">Season 1 Benchmark</p>
+                <p className="text-sm text-[#5a4431]/70">
+                  Equal-weighted basket · {timeframeLabel} data
+                </p>
               </div>
               <div className="flex items-center gap-3">
-                <button
-                  type="button"
-                  className={`rounded-full border px-4 py-1 text-xs font-semibold uppercase tracking-[0.2em] ${
-                    timeRange === "all"
-                      ? "border-[#7c3aed] bg-[#7c3aed]/10 text-[#4c1d95]"
-                      : "border-[#d4c2a8] text-[#5a4431]"
-                  }`}
-                  onClick={() => setTimeRange("all")}
-                >
-                  All
-                </button>
-                <button
-                  type="button"
-                  className={`rounded-full border px-4 py-1 text-xs font-semibold uppercase tracking-[0.2em] ${
-                    timeRange === "72h"
-                      ? "border-[#7c3aed] bg-[#7c3aed]/10 text-[#4c1d95]"
-                      : "border-[#d4c2a8] text-[#5a4431]"
-                  }`}
-                  onClick={() => setTimeRange("72h")}
-                >
-                  72h
-                </button>
+                {availableTimeframes.map((option) => (
+                  <button
+                    key={option}
+                    type="button"
+                    className={`rounded-full border px-4 py-1 text-xs font-semibold uppercase tracking-[0.2em] ${
+                      timeframe === option
+                        ? "border-[#7c3aed] bg-[#7c3aed]/10 text-[#4c1d95]"
+                        : "border-[#d4c2a8] text-[#5a4431]"
+                    }`}
+                    onClick={() => setTimeframe(option)}
+                  >
+                    {TIMEFRAME_LABELS[option]}
+                  </button>
+                ))}
               </div>
             </div>
 
@@ -291,8 +329,7 @@ export function Dashboard({ data }: DashboardProps) {
                 {totalChange >= 0 ? "+" : "-"}
                 {formatCurrency(Math.abs(totalChange))}
                 {" · "}
-                {totalChangePct >= 0 ? "+" : "-"}
-                {Math.abs(totalChangePct).toFixed(2)}%
+                {formatPercent(totalChangePct)}
               </div>
             </div>
 
@@ -301,9 +338,7 @@ export function Dashboard({ data }: DashboardProps) {
                 <LineChart data={processedPoints}>
                   <XAxis
                     dataKey="timestamp"
-                    tickFormatter={(value) =>
-                      format(new Date(value), "MMM d")
-                    }
+                    tickFormatter={xAxisFormatter}
                     stroke="#8b7355"
                     tickLine={false}
                     axisLine={{ stroke: "#d4c2a8" }}
@@ -333,7 +368,13 @@ export function Dashboard({ data }: DashboardProps) {
                       name === "total_value" ? "Total" : name,
                     ]}
                     labelFormatter={(label) =>
-                      format(new Date(label), "MMM d, yyyy HH:mm")
+                      (() => {
+                        const date = new Date(label);
+                        if (Number.isNaN(date.getTime())) {
+                          return label;
+                        }
+                        return format(date, tooltipDatePattern);
+                      })()
                     }
                   />
                   {chartMode === "value" && totalFirst > 0 ? (
@@ -378,7 +419,8 @@ export function Dashboard({ data }: DashboardProps) {
                             const latest = latestValues[key] ?? 0;
                             const base = baseValues[key] ?? 0;
                             const safeBase = base === 0 ? 1 : base;
-                            const changePct = ((latest - base) / safeBase) * 100;
+                            const changePct =
+                              ((latest - base) / safeBase) * 100;
                             return formatPercent(changePct);
                           })()}
                     </span>
@@ -391,33 +433,61 @@ export function Dashboard({ data }: DashboardProps) {
           <aside className="flex flex-col gap-4 rounded-xl border border-[#d4c2a8]/70 bg-white/90 p-6 shadow-sm backdrop-blur">
             <div>
               <div className="text-xs font-semibold uppercase tracking-[0.3em] text-[#5a4431]/70">
-                Countdown to Season 1.5
+                Dataset Coverage
               </div>
-              <div className="mt-2 text-2xl font-semibold text-[#4c1d95]">
-                {countdown.days.toString().padStart(2, "0")}d{" "}
-                {countdown.hours.toString().padStart(2, "0")}h{" "}
-                {countdown.minutes.toString().padStart(2, "0")}m{" "}
-                {countdown.seconds.toString().padStart(2, "0")}s
+              <div className="mt-3 space-y-2 text-sm text-[#4a3727]">
+                <div className="flex items-center justify-between">
+                  <span className="uppercase tracking-[0.2em] text-[#5a4431]/70">
+                    Start
+                  </span>
+                  <span className="font-medium text-[#1f1a12]">
+                    {startDateLabel}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="uppercase tracking-[0.2em] text-[#5a4431]/70">
+                    End
+                  </span>
+                  <span className="font-medium text-[#1f1a12]">
+                    {endDateLabel}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="uppercase tracking-[0.2em] text-[#5a4431]/70">
+                    Points
+                  </span>
+                  <span className="font-medium text-[#1f1a12]">
+                    {dataPointsCount.toLocaleString()}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="uppercase tracking-[0.2em] text-[#5a4431]/70">
+                    Last Update
+                  </span>
+                  <span className="font-medium text-[#1f1a12]">
+                    {lastUpdatedLabel}
+                  </span>
+                </div>
               </div>
             </div>
             <div className="h-px bg-[#d4c2a8]/60" />
             <div className="space-y-4 text-sm leading-relaxed text-[#4a3727]">
               <p>
-                Season 1 concluded on{" "}
-                <strong>
-                  {format(SEASON_ONE_CONCLUDED, "MMM d, yyyy 'at' h:mm a 'EST'")}
-                </strong>
-                . We learned how each LLM navigated live markets — trade
-                frequency, risk bias, and long/short ratios.
+                {timeframeLabel} candles aggregated across{" "}
+                <strong>{symbolList || "—"}</strong>. Values track an
+                equal-weighted basket in rupees.
               </p>
               <p>
-                Season 1.5 arrives later this month with improved benchmarks,
-                memory, and an expanded asset universe. Expect multiple
-                simultaneous competitions and richer qualitative data.
+                Toggle timeframes to compare intraday momentum with the broader
+                daily trend. Percentage mode normalises each series to its first
+                value for cleaner relative comparisons.
               </p>
               <p>
-                Follow Nofi on X and join the waitlist to be first in line for
-                launch news and product access.
+                The raw CSVs live in{" "}
+                <code className="rounded bg-[#f2eadf] px-2 py-0.5 text-xs">
+                  historical_data/
+                </code>
+                . Update them to refresh this dashboard or to try new assets.
               </p>
             </div>
             <div className="mt-auto">
@@ -425,15 +495,16 @@ export function Dashboard({ data }: DashboardProps) {
                 className="inline-flex w-full items-center justify-center rounded-full border border-[#4c1d95] bg-[#7c3aed]/10 px-4 py-2 text-sm font-semibold text-[#4c1d95] transition hover:bg-[#4c1d95]/10"
                 href="#"
               >
-                Join the Platform Waitlist →
+                View Data Guide →
               </a>
             </div>
           </aside>
         </section>
 
         <footer className="rounded-xl border border-[#d4c2a8]/70 bg-white/80 px-6 py-4 text-sm text-[#5a4431]/80 shadow-sm backdrop-blur">
-          Alpha Arena Season 1 is now over. Season 1.5 launches soon with richer
-          analytics, long-term memory, and a broader asset set. Stay tuned.
+          Historical OHLC data for {symbolList || "NSE equities"} powers this AI
+          trading dashboard. Replace the CSVs in `historical_data/` to refresh
+          the view or experiment with new universes.
         </footer>
       </main>
     </div>
