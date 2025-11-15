@@ -5,7 +5,7 @@
 A Python-only AI trading system for Indian stock markets using FastAPI backend, MCP for tool calling, and Dhan API for trading execution. The system supports 5 top Indian stocks, 2 LLM models, and 4 trading strategies with real-time decision making and execution.
 
 ### Key Features
-- **Python-Only Architecture**: FastAPI backend, no JavaScript dependencies
+- **Python-Only Architecture**:FastAPI backend, no JavaScript dependencies
 - **Multi-LLM Support**: 2 different LLM models for diverse decision making
 - **4 Trading Strategies**: VWAP, EMA, RSI, and Smart Money Concepts
 - **Top 5 Indian Stocks**: RELIANCE, TCS, INFY, HDFCBANK, ICICIBANK
