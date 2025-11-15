@@ -382,10 +382,107 @@ async def get_technical_indicators(symbol: str):
             "message": "Indicators endpoint - integrate with strategy calculations",
             "timestamp": datetime.utcnow().isoformat()
         }
-        
+
     except Exception as e:
         logger.error(f"Error fetching indicators for {symbol}: {e}")
         raise HTTPException(status_code=500, detail="Error fetching indicators")
+
+# === PORTFOLIO VISUALIZATION ENDPOINTS ===
+
+@app.get("/api/portfolio/multi-asset-performance")
+async def get_multi_asset_performance(
+    days: int = Query(30, description="Number of days to fetch", ge=1, le=365),
+    time_range: Optional[str] = Query(None, description="Time range filter (24h, 72h, all)"),
+    db: Session = Depends(get_db)
+):
+    """
+    Get multi-asset portfolio performance data for visualization
+    Returns time-series data with total portfolio value and individual asset performance
+    """
+    try:
+        # Calculate date range
+        now = datetime.utcnow()
+
+        # Apply time range filter
+        if time_range == "24h":
+            start_date = now - timedelta(hours=24)
+        elif time_range == "72h":
+            start_date = now - timedelta(hours=72)
+        else:  # "all" or None
+            start_date = now - timedelta(days=days)
+
+        # Query portfolio snapshots with positions data
+        snapshots = db.query(PortfolioSnapshot).filter(
+            PortfolioSnapshot.created_at >= start_date
+        ).order_by(PortfolioSnapshot.created_at).all()
+
+        if not snapshots:
+            return {
+                "timestamps": [],
+                "total_value": [],
+                "assets": {},
+                "metadata": {
+                    "start_date": start_date.isoformat(),
+                    "end_date": now.isoformat(),
+                    "data_points": 0
+                }
+            }
+
+        # Process snapshots to extract multi-asset data
+        timestamps = []
+        total_values = []
+        assets_data = {}  # {asset_symbol: [values]}
+
+        for snapshot in snapshots:
+            timestamps.append(snapshot.created_at.isoformat())
+            total_values.append(float(snapshot.total_value))
+
+            # Parse positions JSON to get individual asset values
+            positions = json.loads(snapshot.positions or "[]")
+
+            for position in positions:
+                symbol = position.get("symbol", "UNKNOWN")
+                # Calculate position value (quantity * current_price)
+                quantity = position.get("quantity", 0)
+                current_price = position.get("current_price", 0)
+                position_value = quantity * current_price
+
+                if symbol not in assets_data:
+                    assets_data[symbol] = []
+
+                assets_data[symbol].append(float(position_value))
+
+        # Ensure all asset arrays have same length as timestamps
+        # Fill missing values with 0 for assets that weren't held at certain times
+        for symbol in assets_data:
+            while len(assets_data[symbol]) < len(timestamps):
+                assets_data[symbol].append(0.0)
+
+        # Calculate statistics
+        latest_value = total_values[-1] if total_values else 0
+        first_value = total_values[0] if total_values else 0
+        total_change = latest_value - first_value
+        change_percentage = (total_change / first_value * 100) if first_value > 0 else 0
+
+        return {
+            "timestamps": timestamps,
+            "total_value": total_values,
+            "assets": assets_data,
+            "metadata": {
+                "start_date": start_date.isoformat(),
+                "end_date": now.isoformat(),
+                "data_points": len(timestamps),
+                "latest_value": latest_value,
+                "first_value": first_value,
+                "total_change": total_change,
+                "change_percentage": change_percentage,
+                "time_range": time_range or f"{days}d"
+            }
+        }
+
+    except Exception as e:
+        logger.error(f"Error fetching multi-asset performance: {e}")
+        raise HTTPException(status_code=500, detail="Error fetching multi-asset performance data")
 
 # === SYSTEM CONTROL ENDPOINTS ===
 

@@ -1,0 +1,326 @@
+╔════════════════════════════════════════════════════════════════════════════════════════╗
+║                    AI TRADING SYSTEM - CODEBASE ARCHITECTURE                          ║
+║                         Visualization Implementation Guide                             ║
+╚════════════════════════════════════════════════════════════════════════════════════════╝
+
+┌─────────────────────────────────────────────────────────────────────────────────────────┐
+│                                                                                         │
+│                           FRONTEND LAYER (Streamlit 8501)                             │
+│                          ╔═══════════════════════════════╗                             │
+│                          ║    dashboard.py               ║                             │
+│                          ║  - 5 Navigation Pages         ║                             │
+│                          ║  - 30s Auto-refresh          ║                             │
+│                          ║  - Plotly Visualizations     ║                             │
+│                          ║  - REST API Calls            ║                             │
+│                          ╚═══════════════════════════════╝                             │
+│                                       │                                                │
+│    ┌────────────────────────────────┬─┴─┬────────────────────────────────┐            │
+│    │                                │   │                                │            │
+│    ▼                                ▼   ▼                                ▼            │
+│ ╔════════════╗  ╔═════════════╗  ╔════════════╗  ╔════════════╗  ╔════════════╗     │
+│ ║ Dashboard  ║  ║  Portfolio  ║  ║   Trades   ║  ║ LLM        ║  ║   System   ║     │
+│ ║            ║  ║  Performance║  ║  History   ║  ║ Decisions  ║  ║  Control   ║     │
+│ ║ - Metrics  ║  ║            ║  ║            ║  ║            ║  ║ - Start    ║     │
+│ ║ - Status   ║  ║ - Line Chrt ║  ║ - Table    ║  ║ - Decision ║  ║ - Stop     ║     │
+│ ║ - Charts   ║  ║ - Bar Chrt  ║  ║ - Filters  ║  ║   List     ║  ║ - Status   ║     │
+│ ║            ║  ║ - 7/30/90d  ║  ║ - Metrics  ║  ║            ║  ║            ║     │
+│ ╚════════════╝  ╚═════════════╝  ╚════════════╝  ╚════════════╝  ╚════════════╝     │
+│                                                                                         │
+│  CURRENT VISUALIZATIONS:                  TO ADD:                                     │
+│  ✓ Portfolio value (line chart)           ✗ Candlestick charts                       │
+│  ✓ Daily P&L (bar chart)                  ✗ Technical indicators overlay             │
+│  ✓ Trade tables (data grid)               ✗ VWAP + bands visualization               │
+│  ✓ Metrics (KPIs)                         ✗ Real-time price tickers                  │
+│  ✓ Decision breakdown (expanders)         ✗ Multi-timeframe view                     │
+│                                                                                         │
+└──────────────────────────────────────┬────────────────────────────────────────────────┘
+                                       │
+                 ┌─────────────────────┼─────────────────────┐
+                 │  HTTP/JSON (requests library)             │
+                 │  Cached responses (5-min, 2-min, etc.)    │
+                 │                                           │
+                 ▼                                           ▼
+        ╔═══════════════════════════════════════════════════════════╗
+        ║         BACKEND LAYER (FastAPI 8000)                     ║
+        ║                  api/main.py                             ║
+        ║  ┌──────────────────────────────────────────────────────┐ ║
+        ║  │ REST Endpoints:                                      │ ║
+        ║  │                                                      │ ║
+        ║  │ Portfolio Data:                                      │ ║
+        ║  │  GET /api/portfolio/performance      (5-min cache)   │ ║
+        ║  │  GET /api/portfolio/{account_id}    (latest)        │ ║
+        ║  │                                                      │ ║
+        ║  │ Trading Data:                                        │ ║
+        ║  │  GET /api/trades                    (history)       │ ║
+        ║  │  GET /api/trades/{trade_id}        (details)        │ ║
+        ║  │                                                      │ ║
+        ║  │ Market Data: [TO ENHANCE]                            │ ║
+        ║  │  GET /api/market-data/{symbol}     (OHLCV data)     │ ║
+        ║  │  GET /api/market-data/{symbol}/indicators (tech)    │ ║
+        ║  │                                                      │ ║
+        ║  │ LLM & System:                                        │ ║
+        ║  │  GET /api/invocations               (2-min cache)   │ ║
+        ║  │  GET /api/system/status             (health check)  │ ║
+        ║  │  GET /api/accounts                  (list)          │ ║
+        ║  │  POST /api/system/start-trading                     │ ║
+        ║  │  POST /api/system/stop-trading                      │ ║
+        ║  │                                                      │ ║
+        ║  └──────────────────────────────────────────────────────┘ ║
+        ║                                                           ║
+        ║  Core Features:                                           ║
+        ║  - CORS enabled (localhost:3000, 3001)                   ║
+        ║  - Error handling & logging                              ║
+        ║  - Market hours detection (NSE: 9:15-15:30)              ║
+        ║  - Database session management                           ║
+        ║  - Caching layer (memory-based)                          ║
+        ║                                                           ║
+        ╚═══════════════════════════════════════════════════════════╝
+                       │                              │
+        ┌──────────────┴──────────────┬───────────────┴──────────────┐
+        │                             │                              │
+        ▼                             ▼                              ▼
+   ╔═════════════════╗      ╔══════════════════╗      ╔═══════════════════╗
+   │ PostgreSQL (5432)       │   Redis (6379)  │      │ Data Pipeline     │
+   │                         │                 │      │                   │
+   │ Tables:                 │ Cache:          │      │ Classes:          │
+   │ - trading_accounts      │ - Performance   │      │ - Dhan API Client │
+   │ - trades                │ - Invocations   │      │ - EnhancedMarket  │
+   │ - portfolio_snapshots   │ - Session       │      │   DataManager     │
+   │ - stocks                │ - Queue tasks   │      │ - VWAPCalculator  │
+   │ - strategies            │ - Celery results│      │ - VWAPBacktester  │
+   │ - trading_signals       │                 │      │ - TradingEngine   │
+   │ - invocations           │                 │      │                   │
+   │ - tool_calls            │                 │      │ Data Sources:     │
+   │                         │                 │      │ - Dhan API        │
+   │ Queries:                │                 │      │ - Market data     │
+   │ - Timeseries data       │                 │      │ - VWAP signals    │
+   │ - Trade joins           │                 │      │ - Technical ind.  │
+   │ - Portfolio snapshots   │                 │      │                   │
+   │                         │                 │      │                   │
+   ╚═════════════════╝      ╚══════════════════╝      ╚═══════════════════╝
+        │                         │
+        └─────────────────────────┴──────────────────────────────┐
+                                                                 │
+                    ╔════════════════════════════════════════════╩════╗
+                    ║                                                  ║
+                    ║         EXTERNAL DATA SOURCES                   ║
+                    ║                                                  ║
+                    ║  ╔════════════════════════════════════════╗     ║
+                    ║  ║   Dhan Trading API                     ║     ║
+                    ║  ║   https://api.dhan.co/v2/             ║     ║
+                    ║  │                                        │     ║
+                    ║  │ Methods:                               │     ║
+                    ║  │ - intraday_minute_data() → OHLCV 5m   │     ║
+                    ║  │ - daily_data()          → Daily OHLCV │     ║
+                    ║  │ - current_price()       → Live price  │     ║
+                    ║  │                                        │     ║
+                    ║  │ Supported Stocks (NSE_EQ):            │     ║
+                    ║  │ - RELIANCE (2885)                      │     ║
+                    ║  │ - TCS (11536)                          │     ║
+                    ║  │ - INFY (1594)                          │     ║
+                    ║  │ - HDFCBANK (1333)                      │     ║
+                    ║  │ - ICICIBANK (4963)                     │     ║
+                    ║  │ - And 25+ others                       │     ║
+                    ║  ╚════════════════════════════════════════╝     ║
+                    ║                                                  ║
+                    ║  ╔════════════════════════════════════════╗     ║
+                    ║  ║   LLM Providers                        ║     ║
+                    ║  ║   Via OpenRouter API                   ║     ║
+                    ║  │                                        │     ║
+                    ║  │ Supported Models:                      │     ║
+                    ║  │ - Claude 3.5 Sonnet (Anthropic)       │     ║
+                    ║  │ - GPT-4 Turbo (OpenAI)                │     ║
+                    ║  │ - Other OpenRouter models             │     ║
+                    ║  │                                        │     ║
+                    ║  │ Usage:                                 │     ║
+                    ║  │ - Decision making                      │     ║
+                    ║  │ - Market analysis                      │     ║
+                    ║  │ - Trade reasoning                      │     ║
+                    ║  ╚════════════════════════════════════════╝     ║
+                    ║                                                  ║
+                    ║  ╔════════════════════════════════════════╗     ║
+                    ║  ║   Technical Analysis Library            ║     ║
+                    ║  ║   TA-Lib (Already Installed)           ║     ║
+                    ║  │                                        │     ║
+                    ║  │ Indicators Available:                  │     ║
+                    ║  │ - SMA, EMA (Moving Averages)           │     ║
+                    ║  │ - RSI (Relative Strength Index)        │     ║
+                    ║  │ - Bollinger Bands                      │     ║
+                    ║  │ - MACD                                 │     ║
+                    ║  │ - Stochastic                           │     ║
+                    ║  │ - ATR                                  │     ║
+                    ║  │ - And 100+ others                      │     ║
+                    ║  ╚════════════════════════════════════════╝     ║
+                    ║                                                  ║
+                    ║  ╔════════════════════════════════════════╗     ║
+                    ║  ║   Custom Indicators                    ║     ║
+                    ║  ║   Implemented in Python                ║     ║
+                    ║  │                                        │     ║
+                    ║  │ - VWAP Calculator                      │     ║
+                    ║  │ - VWAP Breakout/Retest Detector        │     ║
+                    ║  │ - Position Sizing (Risk-based)         │     ║
+                    ║  │ - Stop Loss & Target Calculator        │     ║
+                    ║  ╚════════════════════════════════════════╝     ║
+                    ║                                                  ║
+                    ╚════════════════════════════════════════════════╝
+
+
+═══════════════════════════════════════════════════════════════════════════════════════════
+
+                    DATA FLOW FOR VISUALIZATION
+
+┌─────────────────────────────────────────────────────────────────────────────────────────┐
+│  CANDLESTICK CHART EXAMPLE (TO IMPLEMENT)                                              │
+│                                                                                          │
+│  1. User clicks "Market Analysis" page in Streamlit                                     │
+│     └─> Triggers show_market_analysis() function                                        │
+│                                                                                          │
+│  2. Frontend requests market data                                                       │
+│     └─> GET /api/market-data/RELIANCE?timeframe=5m&limit=100                            │
+│                                                                                          │
+│  3. Backend processes request                                                           │
+│     └─> EnhancedMarketDataManager.get_timeframe_data('RELIANCE', '5m')                  │
+│     └─> Dhan API call: intraday_minute_data()                                           │
+│     └─> Returns: {timestamp[], open[], high[], low[], close[], volume[]}               │
+│                                                                                          │
+│  4. Backend enriches data with indicators                                               │
+│     └─> VWAPCalculator.calculate_vwap(data) → vwap[]                                    │
+│     └─> VWAPCalculator.calculate_vwap_bands() → upper_band[], lower_band[]             │
+│                                                                                          │
+│  5. Response sent to frontend                                                           │
+│     └─> JSON: {ohlcv: {timestamp, open, high, low, close, volume}, vwap, bands}       │
+│                                                                                          │
+│  6. Frontend renders visualization                                                      │
+│     └─> go.Candlestick(x, open, high, low, close)                                      │
+│     └─> go.Scatter(x, y=vwap, name='VWAP')                                             │
+│     └─> go.Bar(x, y=volume) on secondary axis                                          │
+│                                                                                          │
+│  7. Interactive chart displayed                                                         │
+│     └─> Hover shows OHLC values                                                         │
+│     └─> Zoom/Pan supported                                                              │
+│     └─> Download as PNG available                                                       │
+│                                                                                          │
+└─────────────────────────────────────────────────────────────────────────────────────────┘
+
+
+═══════════════════════════════════════════════════════════════════════════════════════════
+
+                         KEY FILES FOR IMPLEMENTATION
+
+Frontend Files:
+├── /frontend/dashboard.py (589 lines)
+│   ├── Lines 1-100: Imports, page config, styling
+│   ├── Lines 101-180: Main layout, sidebar, navigation
+│   ├── Lines 181-266: Dashboard page (overview)
+│   ├── Lines 267-348: Portfolio page (with charts) ← ENHANCE HERE
+│   ├── Lines 350-429: Trades page (with tables)
+│   ├── Lines 431-500: LLM decisions page
+│   └── Lines 501-587: System control page
+│
+├── /frontend/requirements.txt ← ADD NEW LIBRARIES HERE
+│   └── Currently: streamlit, plotly, pandas, requests, etc.
+│       Optional additions: plotly-resampler, streamlit-plotly-events
+│
+└── /frontend/run_dashboard.py (launch script)
+
+
+Backend Files:
+├── /api/main.py (532 lines)
+│   ├── Lines 65-127: Portfolio endpoints (✓ working)
+│   ├── Lines 166-246: Invocation endpoints (✓ working)
+│   ├── Lines 249-296: Trade endpoints (✓ working)
+│   ├── Lines 347-388: Market data endpoints (✗ ENHANCE THESE)
+│   ├── Lines 390-431: System control endpoints (✓ working)
+│   └── Lines 492-506: Helper functions
+│
+├── /api/schemas.py (133 lines)
+│   └── Pydantic models for request/response validation
+│       ← ADD MarketDataResponse schema if needed
+│
+├── /data/enhanced_market_data_manager.py (271 lines)
+│   ├── Lines 60-78: get_timeframe_data()
+│   ├── Lines 94-121: get_all_timeframes()
+│   └── Lines 167-223: Format for LLM (can reuse)
+│
+├── /vwap_calculator.py (50+ lines)
+│   ├── calculate_vwap()
+│   ├── calculate_vwap_bands()
+│   └── Proven implementation (39.74% backtest)
+│
+└── /models/database.py (190+ lines)
+    ├── PortfolioSnapshot (tracks portfolio over time)
+    ├── Trade (stores executed trades)
+    ├── TradingSignal (logs all signals)
+    └── Related models
+
+
+═══════════════════════════════════════════════════════════════════════════════════════════
+
+                      DEVELOPMENT WORKFLOW
+
+Step 1: Understand Data Structure
+  ✓ Done - See CODEBASE_STRUCTURE_FOR_VISUALIZATION.md
+
+Step 2: Enhance Market Data Endpoints
+  → api/main.py lines 349-388
+  → Integrate EnhancedMarketDataManager.get_timeframe_data()
+  → Return: OHLCV + technical indicators
+
+Step 3: Create Frontend Visualization Functions
+  → frontend/dashboard.py new section
+  → Create show_market_analysis() function
+  → Use go.Candlestick() from Plotly
+
+Step 4: Add New Dashboard Page
+  → Add "Market Analysis" to navigation menu (line 134-146)
+  → Wire into show_market_analysis() function (line 170-179)
+
+Step 5: Test Data Flow
+  → Verify API endpoint returns correct structure
+  → Check frontend can parse JSON
+  → Render chart without errors
+
+Step 6: Polish & Optimize
+  → Add caching to reduce API calls
+  → Optimize for large datasets
+  → Add responsive design
+  → Implement real-time updates (optional)
+
+
+═══════════════════════════════════════════════════════════════════════════════════════════
+
+                    QUICK FACT SHEET
+
+Technology Stack:
+  Backend:  FastAPI 0.104.1 + PostgreSQL 15 + Redis 7 + SQLAlchemy 2.0.23
+  Frontend: Streamlit 1.28.1 + Plotly 5.17.0 + Pandas 2.1.3 + NumPy 1.25.2
+  Data:     Dhan API (Indian stocks) + TA-Lib 0.4.32 + Custom indicators
+  LLM:      Anthropic + OpenAI via OpenRouter API
+  Deployment: Docker + Docker Compose
+
+Ports:
+  Frontend: 8501 (Streamlit)
+  Backend:  8000 (FastAPI/Uvicorn)
+  Database: 5432 (PostgreSQL)
+  Cache:    6379 (Redis)
+
+Current Performance:
+  VWAP Strategy: 39.74% return (90-day backtest on RELIANCE)
+  Win Rate: 51.8%
+  Profit Factor: 1.44
+  Max Drawdown: 10.07%
+  Total Trades: 85
+
+Trading Hours:
+  NSE Market: 09:15 - 15:30 IST
+  Strategy: 5-minute candles
+  Risk per trade: 2% of account
+  Risk-Reward ratio: 1:3
+
+Document Locations:
+  Main README: /README.md (7.5 KB)
+  This structure guide: /CODEBASE_STRUCTURE_FOR_VISUALIZATION.md
+  Quick reference: /VISUALIZATION_QUICK_REFERENCE.md
+  This diagram: /ARCHITECTURE_DIAGRAM.txt
+
+═══════════════════════════════════════════════════════════════════════════════════════════

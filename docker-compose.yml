@@ -15,6 +15,8 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
+    networks:
+      - ai_trading_network
 
   redis:
     image: redis:7-alpine
@@ -28,6 +30,8 @@ services:
       interval: 5s
       timeout: 3s
       retries: 5
+    networks:
+      - ai_trading_network
 
   app:
     build:
@@ -49,7 +53,35 @@ services:
     restart: unless-stopped
     volumes:
       - ./trading_system.log:/app/trading_system.log
+    networks:
+      - ai_trading_network
+
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+    container_name: ai_trading_frontend
+    ports:
+      - "3000:3000"
+    environment:
+      - API_BASE_URL=http://app:8000
+      - NEXT_PUBLIC_API_BASE_URL=http://app:8000
+    depends_on:
+      - app
+    restart: unless-stopped
+    networks:
+      - ai_trading_network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
 
 volumes:
   postgres_data:
   redis_data:
+
+networks:
+  ai_trading_network:
+    driver: bridge
